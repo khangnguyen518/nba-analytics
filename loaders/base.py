@@ -5,18 +5,39 @@ import sys
 import math
 import inspect
 from abc import ABC, abstractmethod
+from datetime import datetime, timezone
 from google.cloud import bigquery
 from google.oauth2 import service_account
+from nba_api.stats.library import http as nba_http
 from config import (
     BQ_PROJECT, BQ_DATASET, BQ_KEYFILE,
     API_RATE_LIMIT, API_MAX_RETRIES, API_TIMEOUT,
     BATCH_SIZE, VERBOSE
 )
 
+nba_http.HEADERS = {
+    'Host': 'stats.nba.com',
+    'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
+    'Accept': 'application/json, text/plain, */*',
+    'Accept-Language': 'en-US,en;q=0.9',
+    'Accept-Encoding': 'gzip, deflate, br',
+    'x-nba-stats-origin': 'stats',
+    'x-nba-stats-token': 'true',
+    'Connection': 'keep-alive',
+    'Referer': 'https://www.nba.com/',
+    'Origin': 'https://www.nba.com',
+}
+
 
 def get_bq_client():
     credentials = service_account.Credentials.from_service_account_file(BQ_KEYFILE)
     return bigquery.Client(credentials=credentials, project=BQ_PROJECT)
+
+
+def stamp_loaded_at(rows: list) -> list:
+    """Stamp loaded_at on every row that doesn't already have one."""
+    now = datetime.now(timezone.utc).isoformat()
+    return [{**row, 'loaded_at': row.get('loaded_at') or now} for row in rows]
 
 
 class BaseLoader(ABC):
@@ -130,6 +151,7 @@ class BaseLoader(ABC):
         if not rows:
             return
 
+        rows      = stamp_loaded_at(rows)
         client    = get_bq_client()
         table_ref = f"{BQ_PROJECT}.{self.dataset}.{self.table_name}"
 
@@ -161,6 +183,7 @@ class BaseLoader(ABC):
         if not rows:
             return
 
+        rows       = stamp_loaded_at(rows)
         client     = get_bq_client()
         temp_table = f"{BQ_PROJECT}.{self.dataset}.{self.table_name}_temp"
         main_table = f"{BQ_PROJECT}.{self.dataset}.{self.table_name}"
@@ -191,18 +214,15 @@ class BaseLoader(ABC):
 
             if VERBOSE:
                 print(f"  ✓ Staged batch: {len(batch)} rows")
-        
-        partition_keys = ", ".join([
-            f"CAST({k} AS STRING)" if k == 'MIN' else k
-            for k in self.upsert_keys
-        ])
+
+        partition_keys = ", ".join(self.upsert_keys)
 
         dedup_sql = f"""
         CREATE OR REPLACE TABLE `{temp_table}` AS
         SELECT * EXCEPT (_row_num) FROM (
             SELECT *, ROW_NUMBER() OVER (
                 PARTITION BY {partition_keys}
-                ORDER BY loaded_at DESC
+                ORDER BY loaded_at DESC NULLS LAST
             ) as _row_num
             FROM `{temp_table}`
         )
