@@ -39,46 +39,68 @@ def get_date_range() -> tuple[str, str]:
     return yesterday, today
 
 
+def get_season_types_for_month() -> list:
+    """
+    Determine which season types to fetch based on the current month:
+    - Oct-Mar: Regular Season only
+    - Apr:     Regular Season + Playoffs (overlap at start of playoffs)
+    - May-Jun: Playoffs only
+    """
+    month = datetime.now().month
+    if month == 4:
+        return ['Regular Season', 'Playoffs']
+    elif month in [5, 6]:
+        return ['Playoffs']
+    else:
+        return ['Regular Season']
+
+
 def fetch_players_who_played(date: str, season: str) -> list:
     """
-    Use LeagueGameLog to get the list of player IDs who played on a given date.
-    This avoids calling PlayerGameLog for every active player — only players
-    who actually appeared in a game get fetched.
+    Use LeagueGameLog to get player IDs who played on a given date.
+    Season types fetched depend on the current month:
+    - Oct-Mar: Regular Season only
+    - Apr:     Regular Season + Playoffs
+    - May-Jun: Playoffs only
     """
-    print(f"  Fetching players who played on {date}...")
+    season_types = get_season_types_for_month()
+    print(f"  Fetching players who played on {date} ({', '.join(season_types)})...")
 
-    time.sleep(random.uniform(2, 4))
+    player_ids = set()
 
-    try:
-        r = leaguegamelog.LeagueGameLog(
-            season=season,
-            player_or_team_abbreviation='P',
-            date_from_nullable=date,
-            date_to_nullable=date,
-        )
-        logs    = r.league_game_log.get_dict()
-        headers = logs['headers']
-        data    = logs['data']
+    for season_type in season_types:
+        time.sleep(random.uniform(2, 4))
 
-        if not data:
-            print(f"  No games found for {date}")
-            return []
+        try:
+            r = leaguegamelog.LeagueGameLog(
+                season=season,
+                player_or_team_abbreviation='P',
+                date_from_nullable=date,
+                date_to_nullable=date,
+                season_type_all_star=season_type
+            )
+            logs    = r.league_game_log.get_dict()
+            headers = logs['headers']
+            data    = logs['data']
 
-        player_id_idx = headers.index('PLAYER_ID')
-        player_ids    = list({row[player_id_idx] for row in data})
-        print(f"  Found {len(player_ids)} players who played on {date}")
-        return player_ids
+            if data:
+                player_id_idx = headers.index('PLAYER_ID')
+                player_ids.update({row[player_id_idx] for row in data})
+                print(f"  Found {len(data)} rows for {season_type}")
+            else:
+                print(f"  No games found for {season_type} on {date}")
 
-    except Exception as e:
-        print(f"  ❌ Could not fetch league game log: {e}")
-        return []
+        except Exception as e:
+            print(f"  ❌ Could not fetch league game log ({season_type}): {e}")
+
+    print(f"  Total unique players: {len(player_ids)}")
+    return list(player_ids)
 
 
 def fetch_game_logs_for_players(player_ids: list, season: str):
     """
     Fetch full-season game logs for a targeted list of players and upsert to BigQuery.
-    Called after fetch_players_who_played() to only hit the API for players
-    who actually played on the target dates.
+    Fetches both Regular Season and Playoffs for each player.
     """
     if not player_ids:
         print("  No players to fetch game logs for")
@@ -118,7 +140,7 @@ def fetch_game_logs_for_players(player_ids: list, season: str):
 
             except Exception as e:
                 if VERBOSE:
-                    print(f"  ⚠️  Could not fetch player {player_id} {season_type}: {e}")
+                    print(f"  ⚠️  Could not fetch player {player_id} ({season_type}): {e}")
 
     if not all_rows:
         print("  No game log rows fetched")

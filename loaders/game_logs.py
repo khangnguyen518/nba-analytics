@@ -65,8 +65,18 @@ class GameLogsLoader(BaseLoader):
         try:
             credentials = service_account.Credentials.from_service_account_file(BQ_KEYFILE)
             client      = bigquery.Client(credentials=credentials, project=BQ_PROJECT)
-            query       = f"SELECT DISTINCT Player_ID FROM `{BQ_PROJECT}.{BQ_DATASET}.{self.table_name}`"
-            result      = client.query(query).result()
+
+            season_type_filter = (
+                f"WHERE season_type = '{self.season_type}'"
+                if self.season_type else ""
+            )
+
+            query = f"""
+            SELECT DISTINCT Player_ID
+            FROM `{BQ_PROJECT}.{BQ_DATASET}.{self.table_name}`
+            {season_type_filter}
+            """
+            result = client.query(query).result()
             return {row.Player_ID for row in result}
         except Exception:
             return set()
