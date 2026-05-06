@@ -6,7 +6,7 @@ from google.cloud import bigquery
 from nba_api.stats.endpoints import leaguegamelog, playergamelog
 from nba_api.stats.library import http as nba_http
 from loaders.base import get_bq_client
-from loaders import load_player_career, load_team_game_logs
+from loaders import load_player_career, load_team_game_logs, load_player_advanced_season_stats
 from config import BQ_PROJECT, BQ_DATASET, VERBOSE
 
 nba_http.HEADERS = {
@@ -198,11 +198,13 @@ def fetch_game_logs_for_players(player_ids: list, season: str):
 def main():
     parser = argparse.ArgumentParser(description="Daily NBA data update")
 
-    parser.add_argument("--skip-career",    action="store_true",
+    parser.add_argument("--skip-career",         action="store_true",
                         help="Skip career stats update")
-    parser.add_argument("--skip-game-logs", action="store_true",
+    parser.add_argument("--skip-game-logs",      action="store_true",
                         help="Skip game logs update")
-    parser.add_argument("--date",           type=str, default=None,
+    parser.add_argument("--skip-advanced-stats", action="store_true",
+                        help="Skip advanced season stats update")
+    parser.add_argument("--date",                type=str, default=None,
                         help="Fetch game logs for a specific date only (MM/DD/YYYY)")
 
     args = parser.parse_args()
@@ -235,6 +237,10 @@ def main():
 
     print("\nFetching team game logs...")
     load_team_game_logs(start_season=current_season, end_season=current_season)
+
+    if not args.skip_advanced_stats:
+        print("\nUpdating advanced season stats...")
+        load_player_advanced_season_stats(season=season_string)
 
     print("\n" + "="*60)
     print("✓ Daily update complete")
